@@ -1,0 +1,65 @@
+# -*- coding: utf-8 -*-
+import telebot
+import requests
+import time
+import pyotp
+import openpyxl
+from openpyxl.styles import Font, Alignment, PatternFill
+
+# এখানে আপনার টেলিগ্রাম বট টোকেনটি বসাবেন
+BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN_HERE"
+bot = telebot.TeleBot(BOT_TOKEN)
+
+# ইউজার ডাটা স্টোর করার জন্য
+user_data = {}
+
+def get_instagram_cookie(username, password, fa_key):
+    session = requests.Session()
+    headers = {'user-agent': 'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.0.0 Mobile Safari/537.36'}
+    session.headers.update(headers)
+    
+    try:
+        r = session.get('https://www.instagram.com/accounts/login/')
+        session.headers.update({'x-csrftoken': r.cookies.get('csrftoken', '')})
+        
+        login_data = {'username': username, 'enc_password': f'#PWD_INSTAGRAM_BROWSER:0:{int(time.time())}:{password}'}
+        res = session.post('https://www.instagram.com/api/v1/web/accounts/login/ajax/', data=login_data).json()
+        
+        if res.get('two_factor_required'):
+            code = pyotp.TOTP(fa_key.replace(" ", "")).now()
+            two_factor_data = {'username': username, 'verificationCode': code, 'two_factor_identifier': res['two_factor_info']['two_factor_identifier']}
+            res = session.post('https://www.instagram.com/api/v1/web/accounts/login/ajax/two_factor/', data=two_factor_data).json()
+            
+        if res.get('authenticated'):
+            return "; ".join([f"{k}={v}" for k, v in session.cookies.get_dict().items()])
+        return "Login Failed"
+    except Exception as e:
+        return str(e)
+
+@bot.message_handler(commands=['start'])
+def start(message):
+    bot.reply_to(message, "স্বাগতম! কুকি এক্সট্র্যাক্ট করতে /extract কমান্ড দিন।")
+
+@bot.message_handler(commands=['extract'])
+def extract(message):
+    user_data[message.chat.id] = {}
+    msg = bot.reply_to(message, "ইউজারনেম দিন:")
+    bot.register_next_step_handler(msg, lambda m: get_pass(m))
+
+def get_pass(message):
+    user_data[message.chat.id]['user'] = message.text
+    msg = bot.reply_to(message, "পাসওয়ার্ড দিন:")
+    bot.register_next_step_handler(msg, lambda m: get_fa(m))
+
+def get_fa(message):
+    user_data[message.chat.id]['pass'] = message.text
+    msg = bot.reply_to(message, "2FA Key দিন:")
+    bot.register_next_step_handler(msg, lambda m: process(m))
+
+def process(message):
+    data = user_data[message.chat.id]
+    cookie = get_instagram_cookie(data['user'], data['pass'], message.text)
+    bot.reply_to(message, f"ফলাফল: {cookie}")
+
+print("Bot is running...")
+bot.infinity_polling()
